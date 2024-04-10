@@ -3,6 +3,7 @@ import time
 import random 
 import numpy as np
 import cv2
+import math #for sqrt function
 '''
     modules needed:
         1- openCv
@@ -75,6 +76,10 @@ class Car:
         if(self.car is None) :
             print("Couldn't spawn the lincoln mkz 2020 car")
             exit()
+        # ----------------
+        ## Init values for some instance variables
+        # ----------------
+        self.currentSpeed = 0
 
         # ----------------
         ## Setting Sensors
@@ -104,8 +109,7 @@ class Car:
         # [debug setting the spectator]
         self.spectator = self.world.get_spectator()
         self.spectator.set_transform(self.camera.get_transform())
-        #[for debugging]
-        self.car.apply_control(carla.VehicleControl(throttle=0.7, steer=0))
+        
     
     
     #------------
@@ -118,12 +122,46 @@ class Car:
 
     # Updatint openCv window view, need to be called periodically
     def OpenCvFrontCameraUpdate(self):
+        image = self.cameraDataDict['image']
+        # Adding the speed text to the winodow showing car camera
+        image = cv2.putText(image, 'Speed: '+str(int(self.currentSpeed))+' kmh', self.OpenCVOrg2, self.OpenCVFont, self.OpenCVFontScale, self.OpenCVColor, self.OpenCVThickness, cv2.LINE_AA)
         # Showing data over the window
         cv2.imshow('RGB Front Camera',self.cameraDataDict['image'])
         # Wait for a small amount of time (1 millisecond) and check if a key is pressed
         # If no key is pressed, continue; otherwise, exit the loop
         cv2.waitKey(1)
         #[todo] : add parameters to openCv window
+
+
+    #------------
+    ## State Utilitites
+    #-------------
+    def SetCarState(self, desiredSpeed, desiredAngle):
+        '''
+            This is an initial function to control car state
+            [todo] : do you need to pass sensor to the camera or use instance variables
+        '''
+        # Read velocity (which is vector in 3d) from the game in m/s
+        currentVelocity = self.car.get_velocity()
+        # converting velocity to speed, then converting m/s to km/h
+        self.currentSpeed = (3.6 * math.sqrt(currentVelocity.x**2 +currentVelocity.y**2 +currentVelocity.z**2 ))
+        print(self.currentSpeed)
+        # Controlling the car throttle based on the current speed and desired speed 
+        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0))
+
+    # Private method for Maintaining the speed using Controller
+    def __MaintainCarSpeed(self, desiredSpeed, currentSpeed):
+        ''' 
+        this is a very simple function to maintan desired speed
+        s arg is actual current speed
+        '''
+        SpeedThreshold = 1.5
+        if currentSpeed >= desiredSpeed:
+            return 0
+        elif currentSpeed < desiredSpeed - SpeedThreshold:
+            return 0.8 # think of it as % of "full gas"
+        else:
+            return 0.4 # tweak this if the car is way over or under preferred speed 
 
 
 
@@ -144,9 +182,7 @@ class Car:
         array of rows equal to height, columns equal to width and we have 4 channels (red, green, blue and alpha)
         '''
         dataDict['image'] = np.reshape(np.copy(image.raw_data), (self.cameraImageHeight, self.cameraImageWidth, 4))
-        
-        print("Entered CallBack successfully ") # [todo]: remove this line
-        
+                
     # Class destructor
     def __del__(self):
         # Destroying the car
@@ -173,3 +209,4 @@ while True:
     # Waiting for world Tick (that's used with async mode which is used by default) [todo] : enable synch mode
     world.wait_for_tick() 
     carInstance.OpenCvFrontCameraUpdate()
+    carInstance.SetCarState(20,1)
