@@ -4,6 +4,10 @@ import random
 import numpy as np
 import cv2
 import math #for sqrt function
+import pidCPython as pid #importing pid Python wrapper 
+import matplotlib.pyplot as plt # for debugging
+
+
 '''
     modules needed:
         1- openCv
@@ -36,6 +40,12 @@ class Car:
     # Sensors Data Dictionary 
     # dataDict = {} [Todo]
 
+    # ----------------
+    ## Debugging Class Variables
+    # ----------------
+    # Initialize lists to store time and variable data for plotting
+    speed_data = []
+
     ## Different openCv display parameters
     # Picking specific font
     OpenCVFont = cv2.FONT_HERSHEY_SIMPLEX
@@ -61,6 +71,8 @@ class Car:
         # Setting the client and the world instance variables
         self.client = client
         self.world = world
+        # Defining Throttle PID
+        self.throttlePID = pid.pid(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
         # Get all avialable spawn points
         self.spawnPoints = self.world.get_map().get_spawn_points()
         # Getting start point of the Car
@@ -145,7 +157,19 @@ class Car:
         currentVelocity = self.car.get_velocity()
         # converting velocity to speed, then converting m/s to km/h
         self.currentSpeed = (3.6 * math.sqrt(currentVelocity.x**2 +currentVelocity.y**2 +currentVelocity.z**2 ))
+
+        #--------
+        # for debugging
+        #----------
+        # self.speed_data.append(self.currentSpeed)
+        # plt.plot(self.speed_data)
+        # plt.xlabel('Time (s)')
+        # plt.ylabel('speed')
+        # plt.title('speed vs Time')
+        # plt.grid(True)
+        # plt.pause(0.001)  # Update the plot
         print(self.currentSpeed)
+
         # Controlling the car throttle based on the current speed and desired speed 
         self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0))
 
@@ -155,14 +179,10 @@ class Car:
         this is a very simple function to maintan desired speed
         s arg is actual current speed
         '''
-        SpeedThreshold = 1.5
-        if currentSpeed >= desiredSpeed:
-            return 0
-        elif currentSpeed < desiredSpeed - SpeedThreshold:
-            return 0.8 # think of it as % of "full gas"
-        else:
-            return 0.4 # tweak this if the car is way over or under preferred speed 
-
+        # Calculating Throttle openning percentage 
+        throttleOpeningPercentage = self.throttlePID.update(setpoint=desiredSpeed, measurement=currentSpeed)
+        # print(throttleOpeningPercentage)
+        return throttleOpeningPercentage /100.0
 
 
     #------------
