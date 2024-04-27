@@ -47,7 +47,10 @@ class Car:
     # ----------------
     # Initialize lists to store time and variable data for plotting
     speed_data = []
-
+    # IMU velocity 
+    IMUVelocity = 0
+    # This counter is used to count how many tick have been executed (used to ignore sensors reading at the begining )
+    execCounter = 0
     ## Different openCv display parameters
     # Picking specific font
     OpenCVFont = cv2.FONT_HERSHEY_SIMPLEX
@@ -74,6 +77,7 @@ class Car:
         self.client = client
         self.world = world
         # apply world settings
+        self.DT = DT
         self.__applyCarlaSettings(DT)
         # Defining Throttle PID, [todo]: need to encapsulated within private function
         self.throttlePID = pid.pid(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
@@ -100,8 +104,6 @@ class Car:
         # ----------------
         ## Setting Sensors [todo]: need to encapsulated within private function
         # ----------------
-        # Setting up IMU
-        self.__configureIMUSensor()
         # Setting up the camera
         # Getting Camera BluePrint
         self.cameraBluePrint = self.world.get_blueprint_library().find('sensor.camera.rgb')
@@ -152,7 +154,11 @@ class Car:
         # Apply
         self.world.apply_settings(settings)
 
-    
+    def configureSensors(self):
+        # Setting Up IMU Sensor and its callback
+        self.__configureIMUSensor()
+
+
     def __configureIMUSensor(self):
         # Getting blue print
         IMUBluePrint = self.world.get_blueprint_library().find('sensor.other.imu')
@@ -166,11 +172,33 @@ class Car:
 
 
     def __IMUListenCallBack(self, data):
-        print("######### START DATA FROM IMU###########")
-        print(data.accelerometer)
-        print(data.frame)
-        print(data.timestamp)
-        print("#########END DATA FROM IMU###########")
+        if(self.execCounter < 10):
+            # This loop to ignore first reading which are garbage values due to car spawning from air
+            return
+        # print("######### START DATA FROM IMU###########")
+        # print(data.accelerometer)
+        print(self.IMUVelocity * 3.6)
+        # print(data.accelerometer.y)
+        self.IMUVelocity = self.__IMUCalculateVelocity(data.accelerometer.x, self.IMUVelocity, self.DT)
+        # print(data.gyroscope)
+        # print(data.compass)
+        # print("#########END DATA FROM IMU###########")
+   
+   
+    def __IMUCalculateVelocity(self, acceleration, initialVelocity, DT):
+        """
+        Calculate velocity from acceleration using numerical integration (Trapezoidal Rule).
+
+        Parameters:
+            acceleration (float): Acceleration value.
+            initialVelocity (float, optional): Initial velocity. Default is 0.
+
+        Returns:
+            float: Velocity calculated from acceleration.
+        """
+        velocityChange = acceleration * DT
+        velocity = velocityChange + initialVelocity
+        return velocity
     #------------
     ## Sensors Utilities
     #-------------
@@ -253,14 +281,15 @@ class Car:
                 
     # Class destructor
     def __del__(self):
-        # Destroying the car
-        self.car.destroy()
-        # Destroying the camera
-        self.camera.destroy()
+        # Destroying vehicle and sensors
+        for actor in self.world.get_actors().filter('*vehicle*'):
+            actor.destroy()
+        for sensor in self.world.get_actors().filter('*sensor*'):
+            sensor.destroy()
         # Closing all openCv2 windows
         cv2.destroyAllWindows() #[todo] : close specific opened windows
         # Stopping camera Sensor (method insied carla.Sensor)
-        self.camera.stop()
+        # self.camera.stop()
 
 
 
@@ -270,6 +299,7 @@ def main():
     # Get world Map
     world = client.get_world()
     carInstance = Car(client, world, 0.01)
+    carInstance.configureSensors()
     carInstance.OpenCvFrontCameraInit()
 
 
@@ -277,6 +307,7 @@ def main():
     while True:
         # applying world tick (synchronous mode)
         world.tick() 
+        carInstance.execCounter +=1
         carInstance.OpenCvFrontCameraUpdate()
         carInstance.SetCarState(20,1)
 
