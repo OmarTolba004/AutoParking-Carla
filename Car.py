@@ -28,6 +28,8 @@ Todos:
     10- [todo] : agree upon adel alogrithms api prototypes
     11- [todo] : add lidar for simulation only
     12- [todo] : add GPS for simulation only 
+    13- [todo] : implement funcitons to encapsulate setting car sensros and Controllers such as pid
+
 '''
 class Car:
 
@@ -64,14 +66,16 @@ class Car:
     # ----------------
     ## Class Constructor
     # ----------------
-    def __init__(self, client, world):
+    def __init__(self, client, world, DT):
         # ----------------
         ## Setting up the world and the vehicle
         # ----------------
         # Setting the client and the world instance variables
         self.client = client
         self.world = world
-        # Defining Throttle PID
+        # apply world settings
+        self.__applyCarlaSettings(DT)
+        # Defining Throttle PID, [todo]: need to encapsulated within private function
         self.throttlePID = pid.pid(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
         # Get all avialable spawn points
         self.spawnPoints = self.world.get_map().get_spawn_points()
@@ -94,8 +98,10 @@ class Car:
         self.currentSpeed = 0
 
         # ----------------
-        ## Setting Sensors
+        ## Setting Sensors [todo]: need to encapsulated within private function
         # ----------------
+        # Setting up IMU
+        self.__configureIMUSensor()
         # Setting up the camera
         # Getting Camera BluePrint
         self.cameraBluePrint = self.world.get_blueprint_library().find('sensor.camera.rgb')
@@ -123,7 +129,48 @@ class Car:
         self.spectator.set_transform(self.camera.get_transform())
         
     
+    def __applyCarlaSettings(self, DT):
+        ''' 
+        This function apply the following carla simulation settings : 
+        1 - Activating synchrounous mode 
+        2 - use fixed time step 
+        3- applies phyiscs substepping
+         Synchronous mode + fixed time-step. The client will rule the simulation. The time step will be fixed.
+         The server will not compute the following step until the client sends a tick.
+         This is the best mode when synchrony and precision is relevant.
+         Especially when dealing with slow clients or different elements retrieving information.
+         refer to https://carla.readthedocs.io/en/latest/adv_synchrony_timestep/#setting-synchronous-mode fro more documentation
+        '''
+        # Get world settings
+        settings = self.world.get_settings()
+        # change settings
+        settings.synchronous_mode = True
+        settings.fixed_delta_seconds = DT
+        settings.substepping = True
+        settings.max_substep_delta_time = 0.01
+        settings.max_substeps = 10
+        # Apply
+        self.world.apply_settings(settings)
+
     
+    def __configureIMUSensor(self):
+        # Getting blue print
+        IMUBluePrint = self.world.get_blueprint_library().find('sensor.other.imu')
+        #[todo] : set blue print attr (such as std deviations and noise seeds)
+        # getting IMU mouting point
+        IMUMountingPoint = carla.Transform(carla.Location(z = 0, x=0))
+        # Spawning the IMU and store it in the self pointer
+        self.IMU = self.world.try_spawn_actor(IMUBluePrint, IMUMountingPoint, attach_to=self.car)
+        # Configure listenning function
+        self.IMU.listen(lambda data : self.__IMUListenCallBack(data))
+
+
+    def __IMUListenCallBack(self, data):
+        print("######### START DATA FROM IMU###########")
+        print(data.accelerometer)
+        print(data.frame)
+        print(data.timestamp)
+        print("#########END DATA FROM IMU###########")
     #------------
     ## Sensors Utilities
     #-------------
@@ -168,7 +215,8 @@ class Car:
         # plt.title('speed vs Time')
         # plt.grid(True)
         # plt.pause(0.001)  # Update the plot
-        print(self.currentSpeed)
+        # DEBUGGING
+        # print(self.currentSpeed)
 
         # Controlling the car throttle based on the current speed and desired speed 
         self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0))
@@ -213,20 +261,26 @@ class Car:
         cv2.destroyAllWindows() #[todo] : close specific opened windows
         # Stopping camera Sensor (method insied carla.Sensor)
         self.camera.stop()
-        
 
 
-# Connecting to the server
-client = carla.Client('localhost',2000)
-# Get world Map
-world = client.get_world()
-carInstance = Car(client, world)
-carInstance.OpenCvFrontCameraInit()
+
+def main():
+    # Connecting to the server
+    client = carla.Client('localhost',2000)
+    # Get world Map
+    world = client.get_world()
+    carInstance = Car(client, world, 0.01)
+    carInstance.OpenCvFrontCameraInit()
 
 
-## Main loop
-while True:
-    # Waiting for world Tick (that's used with async mode which is used by default) [todo] : enable synch mode
-    world.wait_for_tick() 
-    carInstance.OpenCvFrontCameraUpdate()
-    carInstance.SetCarState(20,1)
+    ## Main loop
+    while True:
+        # applying world tick (synchronous mode)
+        world.tick() 
+        carInstance.OpenCvFrontCameraUpdate()
+        carInstance.SetCarState(20,1)
+
+
+if __name__ == '__main__':
+    main()
+
