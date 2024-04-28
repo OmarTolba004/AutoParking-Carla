@@ -28,7 +28,7 @@ Todos:
     9- [todo] : add ultrasonics and Imu sensors and ensure their readings are meaningful
     10- [todo] : agree upon adel alogrithms api prototypes
     11- [todo] : add lidar for simulation only
-    12- [todo] : add GPS for simulation only 
+    12- [todo] : add GPS for simulation only [done]
     13- [todo] : implement funcitons to encapsulate setting car sensros and Controllers such as pid
 
 '''
@@ -47,25 +47,7 @@ class Car:
     # This counter is used to count how many tick have been executed (used to ignore sensors reading at the begining )
     execCounter = 0
 
-    # ----------------
-    ## Sensor Fusion related Variables
-    # ----------------
-    # Action parameters, velcoity and yawrate(angular velocity)
-    u = np.zeros((2,1))
-    # Measurement, x-pos and y-pos
-    z = np.zeros((2,1))
-    # State Vector [x y yaw v]'
-    xEst = np.zeros((4, 1))
-    xTrue = np.zeros((4, 1))
-    PEst = np.eye(4)
-
-    xDR = np.zeros((4, 1))  # Dead reckoning
-
-    # history [DEBUGGING]
-    hxEst = xEst
-    hxTrue = xTrue
-    hxDR = xTrue
-    hz = np.zeros((2, 1))
+   
 
 
     # ----------------
@@ -92,6 +74,7 @@ class Car:
     ## Class Constructor
     # ----------------
     def __init__(self, client, world, DT):
+
         # ----------------
         ## Setting up the world and the vehicle
         # ----------------
@@ -101,9 +84,8 @@ class Car:
         # apply world settings
         self.DT = DT
         self.__applyCarlaSettings(DT)
-        # Initialize sensor fusion instance with no noise in IMU or GPS 
-        # [todo] : add noise to GPS and IMU
-        self.sf = SF.EKF(np.zeros((2,1)), np.zeros((2,1)), self.DT)
+        
+        
        
         # Defining Throttle PID, [todo]: need to encapsulated within private function
         self.throttlePID = pid.pid(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
@@ -122,6 +104,10 @@ class Car:
         if(self.car is None) :
             print("Couldn't spawn the lincoln mkz 2020 car")
             exit()
+
+        # required Sensor fusion initialization 
+        self.__SensorFusionInit()
+
         # ----------------
         ## Init values for some instance variables
         # ----------------
@@ -179,23 +165,88 @@ class Car:
         # Apply
         self.world.apply_settings(settings)
 
-    def __sensorFusionObservation(self):
-        # Get action (u), get measurement (z), get estimation for new position
-        xPos = self.world.get_map().transform_to_geolocation(self.car.get_transform().location).longitude
-        yPos = self.world.get_map().transform_to_geolocation(self.car.get_transform().location).latitude 
-        
-        xTrue = self.sf.motion_model(xTrue, self.u)
+    def __SensorFusionInit(self):
+        # Creating instance out of EKF filter
+        # [todo] : add noise to GPS and IMU
+        self.sf = SF.EKF(np.zeros((2,1)), np.zeros((2,1)), self.DT)
 
-        return xTrue
+
+        # initialize True position 
+        self.xTrue = np.array([[self.startPoint.location.x],
+                               [self.startPoint.location.y],
+                               [0],
+                               [self.car.get_velocity().x]])
+        # initialize estimate position (the value corrected by EKF in correction step)
+        self.xEst  = np.copy(self.xTrue)
+        # Dead reckoning init value (the value calculated from the motion model and the action)
+        self.xDR = np.copy(self.xTrue)
+        # Variance init value
+        self.PEst = np.eye(4)
+        
+        # Action parameters, velcoity and yawrate(angular velocity)
+        self.u = np.zeros((2,1))
+        # Measurement init values, x-pos and y-pos
+        self.z = np.zeros((2,1))
+
+        ##Debugging 
+        self.hxDR = self.xTrue
+        self.hxTrue = self.xTrue
+        self.hxEst = self.xEst
+
+    def __sensorFusionObservation(self):
+
+        '''
+        1 - update xTrue
+        2- get input (already done)
+        3- get measurement (already done)
+        4- calculate DR using motion motion model
+        '''
+        # Update xTrue with car current pos
+        self.xTrue = np.array([[self.car.get_transform().location.x],
+                               [self.car.get_transform().location.y],
+                               [0],
+                               [self.car.get_velocity().x]])
+        
+        
+        # Calculate Dead reckoning basked on action model
+        self.xDR= self.sf.motion_model(self.xDR, self.u)
+        
+
+
+        # UnComment for debugging
+        self.xDR= self.sf.motion_model(self.xDR, self.u)
+        self.hxDR = np.hstack((self.hxDR, self.xDR))
+        self.hxTrue = np.hstack((self.hxTrue, self.xTrue))
+        
+        
+        
 
     def applySensorFusion(self):
-
+        # apply obesrvation
         self.__sensorFusionObservation()
-        '''
-        1 - get observation 
-        2- estimate new position
-        ''' 
-        pass
+        # estimating new position 
+        self.xEst, self.PEst = self.sf.ekf_estimation(self.xEst, self.PEst, self.z, self.u)
+        
+        self.hxEst = np.hstack((self.hxEst, self.xEst))
+        
+        # print(self.xEst[0])
+
+
+        plt.cla()
+            # for stopping simulation with the esc key.
+        plt.gcf().canvas.mpl_connect('key_release_event',
+                lambda event: [exit(0) if event.key == 'escape' else None])
+        # plt.plot(self.hxEst[0, :].flatten(),
+        #              self.hxEst[1, :].flatten() + 1 , "-r", label = "ekf estimation")
+        plt.plot(self.hxDR[0, :].flatten(),
+                     self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
+        plt.plot(self.hxTrue[0, :].flatten(),
+                     self.hxTrue[1, :].flatten() + 0.6, "-b", label="ture position")
+        plt.axis("equal")
+        plt.legend()
+        plt.grid(True)
+        plt.pause(0.001)
+
         
     
     #------------
@@ -254,7 +305,7 @@ class Car:
         GNSSBluePrint = self.world.get_blueprint_library().find('sensor.other.gnss')
         #[todo] : set blue print attr (such as std deviations and noise seeds)
         # getting GNSS mouting point
-        GNSSMountingPoint = carla.Transform(carla.Location(z = 0, x=2))
+        GNSSMountingPoint = carla.Transform(carla.Location(z = 0, x=0))
         # Spawning the GNSS and store it in the self pointer
         self.GNSS = self.world.try_spawn_actor(GNSSBluePrint, GNSSMountingPoint, attach_to=self.car)
         # Configure listenning function
@@ -267,7 +318,8 @@ class Car:
         
         # Storing the measurement 
         self.z = np.array([[data.longitude],[data.latitude]])
-        print("geolocaion from sensor: " ,data.longitude)
+        # for now I am using trasfrom values from the simulation as reading [todo]: see how to fix this
+        self.z = np.array([[self.car.get_transform().location.x],[self.car.get_transform().location.y]])
     
     # Method to open the front Camera OpenCvWindow
     def OpenCvFrontCameraInit(self):
@@ -314,7 +366,7 @@ class Car:
         # print(self.currentSpeed)
 
         # Controlling the car throttle based on the current speed and desired speed 
-        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0.6))
+        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0))
 
     # Private method for Maintaining the speed using Controller
     def __MaintainCarSpeed(self, desiredSpeed, currentSpeed):
@@ -324,7 +376,6 @@ class Car:
         '''
         # Calculating Throttle openning percentage 
         throttleOpeningPercentage = self.throttlePID.update(setpoint=desiredSpeed, measurement=currentSpeed)
-        # print(throttleOpeningPercentage)
         return throttleOpeningPercentage /100.0
 
 
@@ -379,6 +430,8 @@ def main():
         carInstance.OpenCvFrontCameraUpdate()
         carInstance.SetCarState(20,1)
         carInstance.applySensorFusion()
+        
+
 
 
 if __name__ == '__main__':
