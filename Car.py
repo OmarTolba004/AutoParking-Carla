@@ -41,20 +41,17 @@ class Car:
     CAMERA_POS_Z = 1.5
     CAMERA_POS_X = 0.4
     # Sensors Data Dictionary 
-    # dataDict = {} [Todo]
     # IMU velocity 
     IMUVelocity = 0
     # This counter is used to count how many tick have been executed (used to ignore sensors reading at the begining )
     execCounter = 0
-
-   
-
+    # Current speed from simulation
+    currentSpeed = 0
 
     # ----------------
     ## Debugging Class Variables
     # ----------------
-    # Initialize lists to store time and variable data for plotting
-    speed_data = []
+
     ## Different openCv display parameters
     # Picking specific font
     OpenCVFont = cv2.FONT_HERSHEY_SIMPLEX
@@ -84,11 +81,17 @@ class Car:
         # apply world settings
         self.DT = DT
         self.__applyCarlaSettings(DT)
-        
-        
        
         # Defining Throttle PID, [todo]: need to encapsulated within private function
         self.throttlePID = pid.pid(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
+        # Spawning the Car 
+        self.__spawnTheCar()
+        
+        # required Sensor fusion initialization 
+        self.__SensorFusionInit()
+
+
+    def __spawnTheCar(self):
         # Get all avialable spawn points
         self.spawnPoints = self.world.get_map().get_spawn_points()
         # Getting start point of the Car
@@ -105,43 +108,6 @@ class Car:
             print("Couldn't spawn the lincoln mkz 2020 car")
             exit()
 
-        # required Sensor fusion initialization 
-        self.__SensorFusionInit()
-
-        # ----------------
-        ## Init values for some instance variables
-        # ----------------
-        self.currentSpeed = 0
-
-        # ----------------
-        ## Setting Sensors [todo]: need to encapsulated within private function
-        # ----------------
-        # Setting up the camera
-        # Getting Camera BluePrint
-        self.cameraBluePrint = self.world.get_blueprint_library().find('sensor.camera.rgb')
-        # Camera mounting point relative to the car
-        self.cameraMountingPoint = carla.Transform(carla.Location(z = self.CAMERA_POS_Z, x=self.CAMERA_POS_X))
-        # Spawning the Camera
-        self.camera = self.world.try_spawn_actor(self.cameraBluePrint, self.cameraMountingPoint, attach_to=self.car)
-        # Checking if Camera spawned correctly 
-        if(self.camera is None):
-            print("Couldn't spawn the Camera sensor")
-            exit()
-        
-        # Getting camera image width and height to initalize dict key value-pair with
-        self.cameraImageWidth = self.cameraBluePrint.get_attribute('image_size_x').as_int()
-        self.cameraImageHeight = self.cameraBluePrint.get_attribute('image_size_y').as_int()
-        # initialize camera data with those height and width 
-        # np.zeros is numpy utility that Return a new array of given shape and type, filled with zeros.
-        # we want array of rows equal to height, columns equal to width and we have 4 channels (red, green, blue and alpha)
-        self.cameraDataDict = {'image' : np.zeros((self.cameraImageHeight, self.cameraImageWidth, 4))}
-        # Camera listen call back
-        self.camera.listen(lambda image: self._CameraCallback(image, self.cameraDataDict))
-
-        # [debug setting the spectator]
-        self.spectator = self.world.get_spectator()
-        self.spectator.set_transform(self.camera.get_transform())
-            
     def __applyCarlaSettings(self, DT):
         ''' 
         This function apply the following carla simulation settings : 
@@ -211,16 +177,13 @@ class Car:
         # Calculate Dead reckoning basked on action model
         self.xDR= self.sf.motion_model(self.xDR, self.u)
         
+        self.xDR= self.sf.motion_model(self.xDR, self.u)
 
 
         # UnComment for debugging
-        self.xDR= self.sf.motion_model(self.xDR, self.u)
         self.hxDR = np.hstack((self.hxDR, self.xDR))
         self.hxTrue = np.hstack((self.hxTrue, self.xTrue))
-        
-        
-        
-
+               
     def applySensorFusion(self):
         # apply obesrvation
         self.__sensorFusionObservation()
@@ -236,8 +199,8 @@ class Car:
             # for stopping simulation with the esc key.
         plt.gcf().canvas.mpl_connect('key_release_event',
                 lambda event: [exit(0) if event.key == 'escape' else None])
-        # plt.plot(self.hxEst[0, :].flatten(),
-        #              self.hxEst[1, :].flatten() + 1 , "-r", label = "ekf estimation")
+        plt.plot(self.hxEst[0, :].flatten(),
+                     self.hxEst[1, :].flatten() + 1 , "-r", label ="ekf estimation")
         plt.plot(self.hxDR[0, :].flatten(),
                      self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
         plt.plot(self.hxTrue[0, :].flatten(),
@@ -247,16 +210,54 @@ class Car:
         plt.grid(True)
         plt.pause(0.001)
 
-        
-    
+  
     #------------
     ## Sensors Utilities
     #-------------
     def configureSensors(self):
+        # Configuring Camera and its callback
+        self.__configureCameraSensor()
         # Setting Up IMU Sensor and its callback
         self.__configureIMUSensor()
         # Setting UP GNSS Sensor and its callback
         self.__configureGNSSSensor()
+
+    def __configureCameraSensor(self):
+        # Getting Camera BluePrint
+        cameraBluePrint = self.world.get_blueprint_library().find('sensor.camera.rgb')
+        # Camera mounting point relative to the car
+        self.cameraMountingPoint = carla.Transform(carla.Location(z = self.CAMERA_POS_Z, x=self.CAMERA_POS_X))
+        # Spawning the Camera
+        self.camera = self.world.try_spawn_actor(cameraBluePrint, self.cameraMountingPoint, attach_to=self.car)
+        # Checking if Camera spawned correctly 
+        if(self.camera is None):
+            print("Couldn't spawn the Camera sensor")
+            exit()
+        
+        # Getting camera image width and height to initalize dict key value-pair with
+        self.cameraImageWidth = cameraBluePrint.get_attribute('image_size_x').as_int()
+        self.cameraImageHeight = cameraBluePrint.get_attribute('image_size_y').as_int()
+        # initialize camera data with those height and width 
+        # np.zeros is numpy utility that Return a new array of given shape and type, filled with zeros.
+        # we want array of rows equal to height, columns equal to width and we have 4 channels (red, green, blue and alpha)
+        self.cameraDataDict = {'image' : np.zeros((self.cameraImageHeight, self.cameraImageWidth, 4))}
+        # Camera listen call back
+        self.camera.listen(lambda image: self._CameraListenCallback(image, self.cameraDataDict))
+
+    # Protected class method, Camera callback
+    def _CameraListenCallback(self, image, dataDict):
+        '''
+        1- Inserting the data into the pass by ref dataDict parameter
+        2- numpy reshape is a utility that Gives a new shape to an array without changing its data.
+        3- The new shape should be compatible with the original shape. If an integer, then the result will be a 1-D array of that length. 
+        4- numpy copy is a utility that Return an array copy of the given object.
+        5-image raw data is a Flattened array of pixel data, use reshape to create an image array, where A flattened array of pixel data refers to a one-dimensional array 
+        that contains the pixel values of an image in a format where all the pixel values are placed sequentially in memory,
+        row by row or column by column, depending on the image's storage convention.
+        6- so what we are doing is converting the image to flattened array then reshape it to the needed shape which is 
+        array of rows equal to height, columns equal to width and we have 4 channels (red, green, blue and alpha)
+        '''
+        dataDict['image'] = np.reshape(np.copy(image.raw_data), (self.cameraImageHeight, self.cameraImageWidth, 4))
 
     def __configureIMUSensor(self):
         # Getting blue print
@@ -338,7 +339,6 @@ class Car:
         cv2.waitKey(1)
         #[todo] : add parameters to openCv window
 
-
     #------------
     ## State Utilitites
     #-------------
@@ -378,25 +378,7 @@ class Car:
         throttleOpeningPercentage = self.throttlePID.update(setpoint=desiredSpeed, measurement=currentSpeed)
         return throttleOpeningPercentage /100.0
 
-
-    #------------
-    ## Sensors Callbacks
-    #-------------
-    # Protected class method, Camera callback
-    def _CameraCallback(self, image, dataDict):
-        '''
-        1- Inserting the data into the pass by ref dataDict parameter
-        2- numpy reshape is a utility that Gives a new shape to an array without changing its data.
-        3- The new shape should be compatible with the original shape. If an integer, then the result will be a 1-D array of that length. 
-        4- numpy copy is a utility that Return an array copy of the given object.
-        5-image raw data is a Flattened array of pixel data, use reshape to create an image array, where A flattened array of pixel data refers to a one-dimensional array 
-        that contains the pixel values of an image in a format where all the pixel values are placed sequentially in memory,
-        row by row or column by column, depending on the image's storage convention.
-        6- so what we are doing is converting the image to flattened array then reshape it to the needed shape which is 
-        array of rows equal to height, columns equal to width and we have 4 channels (red, green, blue and alpha)
-        '''
-        dataDict['image'] = np.reshape(np.copy(image.raw_data), (self.cameraImageHeight, self.cameraImageWidth, 4))
-                
+              
     # Class destructor
     def __del__(self):
         # Destroying vehicle and sensors
@@ -412,28 +394,4 @@ class Car:
 
 
 
-def main():
-    # Connecting to the server
-    client = carla.Client('localhost',2000)
-    # Get world Map
-    world = client.get_world()
-    carInstance = Car(client, world, 0.01)
-    carInstance.configureSensors()
-    carInstance.OpenCvFrontCameraInit()
-
-
-    ## Main loop
-    while True:
-        # applying world tick (synchronous mode)
-        world.tick() 
-        carInstance.execCounter +=1
-        carInstance.OpenCvFrontCameraUpdate()
-        carInstance.SetCarState(20,1)
-        carInstance.applySensorFusion()
-        
-
-
-
-if __name__ == '__main__':
-    main()
 
