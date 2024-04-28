@@ -6,6 +6,7 @@ import cv2
 import math #for sqrt function
 import pidCPython as pid #importing pid Python wrapper 
 import matplotlib.pyplot as plt # for debugging
+import KalmanEKF as SF
 
 
 '''
@@ -41,16 +42,37 @@ class Car:
     CAMERA_POS_X = 0.4
     # Sensors Data Dictionary 
     # dataDict = {} [Todo]
+    # IMU velocity 
+    IMUVelocity = 0
+    # This counter is used to count how many tick have been executed (used to ignore sensors reading at the begining )
+    execCounter = 0
+
+    # ----------------
+    ## Sensor Fusion related Variables
+    # ----------------
+    # Action parameters, velcoity and yawrate(angular velocity)
+    u = np.zeros((2,1))
+    # Measurement, x-pos and y-pos
+    z = np.zeros((2,1))
+    # State Vector [x y yaw v]'
+    xEst = np.zeros((4, 1))
+    xTrue = np.zeros((4, 1))
+    PEst = np.eye(4)
+
+    xDR = np.zeros((4, 1))  # Dead reckoning
+
+    # history [DEBUGGING]
+    hxEst = xEst
+    hxTrue = xTrue
+    hxDR = xTrue
+    hz = np.zeros((2, 1))
+
 
     # ----------------
     ## Debugging Class Variables
     # ----------------
     # Initialize lists to store time and variable data for plotting
     speed_data = []
-    # IMU velocity 
-    IMUVelocity = 0
-    # This counter is used to count how many tick have been executed (used to ignore sensors reading at the begining )
-    execCounter = 0
     ## Different openCv display parameters
     # Picking specific font
     OpenCVFont = cv2.FONT_HERSHEY_SIMPLEX
@@ -79,6 +101,10 @@ class Car:
         # apply world settings
         self.DT = DT
         self.__applyCarlaSettings(DT)
+        # Initialize sensor fusion instance with no noise in IMU or GPS 
+        # [todo] : add noise to GPS and IMU
+        self.sf = SF.EKF(np.zeros((2,1)), np.zeros((2,1)), self.DT)
+       
         # Defining Throttle PID, [todo]: need to encapsulated within private function
         self.throttlePID = pid.pid(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
         # Get all avialable spawn points
@@ -129,8 +155,7 @@ class Car:
         # [debug setting the spectator]
         self.spectator = self.world.get_spectator()
         self.spectator.set_transform(self.camera.get_transform())
-        
-    
+            
     def __applyCarlaSettings(self, DT):
         ''' 
         This function apply the following carla simulation settings : 
@@ -154,10 +179,33 @@ class Car:
         # Apply
         self.world.apply_settings(settings)
 
+    def __sensorFusionObservation(self):
+        # Get action (u), get measurement (z), get estimation for new position
+        xPos = self.world.get_map().transform_to_geolocation(self.car.get_transform().location).longitude
+        yPos = self.world.get_map().transform_to_geolocation(self.car.get_transform().location).latitude 
+        
+        xTrue = self.sf.motion_model(xTrue, self.u)
+
+        return xTrue
+
+    def applySensorFusion(self):
+
+        self.__sensorFusionObservation()
+        '''
+        1 - get observation 
+        2- estimate new position
+        ''' 
+        pass
+        
+    
+    #------------
+    ## Sensors Utilities
+    #-------------
     def configureSensors(self):
         # Setting Up IMU Sensor and its callback
         self.__configureIMUSensor()
-
+        # Setting UP GNSS Sensor and its callback
+        self.__configureGNSSSensor()
 
     def __configureIMUSensor(self):
         # Getting blue print
@@ -170,21 +218,22 @@ class Car:
         # Configure listenning function
         self.IMU.listen(lambda data : self.__IMUListenCallBack(data))
 
-
     def __IMUListenCallBack(self, data):
         if(self.execCounter < 10):
             # This loop to ignore first reading which are garbage values due to car spawning from air
             return
-        # print("######### START DATA FROM IMU###########")
-        # print(data.accelerometer)
-        print(self.IMUVelocity * 3.6)
-        # print(data.accelerometer.y)
+
+        '''
+        All the sensors use the UE coordinate system (x-forward, y-right, z-up),
+        and return coordinates in local space. 
+        so to get angular velocity around longitudinal axis, we use the gyroscope reading in the x-driection
+        and same with longitudinal axis
+        '''
+        # Calculating velocity based upon accelration reading in the longitudinal axis
         self.IMUVelocity = self.__IMUCalculateVelocity(data.accelerometer.x, self.IMUVelocity, self.DT)
-        # print(data.gyroscope)
-        # print(data.compass)
-        # print("#########END DATA FROM IMU###########")
-   
-   
+        # Storing velocity in m/s and yawrate in rad/s
+        self.u = np.array([[self.IMUVelocity],[data.gyroscope.x]])
+        
     def __IMUCalculateVelocity(self, acceleration, initialVelocity, DT):
         """
         Calculate velocity from acceleration using numerical integration (Trapezoidal Rule).
@@ -199,9 +248,27 @@ class Car:
         velocityChange = acceleration * DT
         velocity = velocityChange + initialVelocity
         return velocity
-    #------------
-    ## Sensors Utilities
-    #-------------
+   
+    def __configureGNSSSensor(self):
+        # Getting blue print
+        GNSSBluePrint = self.world.get_blueprint_library().find('sensor.other.gnss')
+        #[todo] : set blue print attr (such as std deviations and noise seeds)
+        # getting GNSS mouting point
+        GNSSMountingPoint = carla.Transform(carla.Location(z = 0, x=2))
+        # Spawning the GNSS and store it in the self pointer
+        self.GNSS = self.world.try_spawn_actor(GNSSBluePrint, GNSSMountingPoint, attach_to=self.car)
+        # Configure listenning function
+        self.GNSS.listen(lambda data : self.__GNSSListenCallBack(data))
+
+    def __GNSSListenCallBack(self, data):
+        if(self.execCounter < 10):
+            # This loop to ignore first reading which are garbage values due to car spawning from air
+            return
+        
+        # Storing the measurement 
+        self.z = np.array([[data.longitude],[data.latitude]])
+        print("geolocaion from sensor: " ,data.longitude)
+    
     # Method to open the front Camera OpenCvWindow
     def OpenCvFrontCameraInit(self):
         # Opening window named RGB Front Camera
@@ -243,11 +310,11 @@ class Car:
         # plt.title('speed vs Time')
         # plt.grid(True)
         # plt.pause(0.001)  # Update the plot
-        # DEBUGGING
+        # # DEBUGGING
         # print(self.currentSpeed)
 
         # Controlling the car throttle based on the current speed and desired speed 
-        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0))
+        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0.6))
 
     # Private method for Maintaining the speed using Controller
     def __MaintainCarSpeed(self, desiredSpeed, currentSpeed):
@@ -286,6 +353,7 @@ class Car:
             actor.destroy()
         for sensor in self.world.get_actors().filter('*sensor*'):
             sensor.destroy()
+            sensor.stop()
         # Closing all openCv2 windows
         cv2.destroyAllWindows() #[todo] : close specific opened windows
         # Stopping camera Sensor (method insied carla.Sensor)
@@ -310,6 +378,7 @@ def main():
         carInstance.execCounter +=1
         carInstance.OpenCvFrontCameraUpdate()
         carInstance.SetCarState(20,1)
+        carInstance.applySensorFusion()
 
 
 if __name__ == '__main__':

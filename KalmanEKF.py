@@ -43,9 +43,7 @@ class EKF:
         # Tick time
         self.DT = DT
 
-        # DEBUGGING
-        print(self.Q, "\n", self.R, '\n', self.IMUNoise, '\n', self.GPSNoise)
-
+        
     # Motion model funciton: refer to the "Sensor Fusion with EKF" pdf for details
     def motion_model(self,x, u):
 
