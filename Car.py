@@ -195,24 +195,21 @@ class Car:
         self.xEst, self.PEst = self.sf.ekf_estimation(self.xEst, self.PEst, self.z, self.u)
         
         self.hxEst = np.hstack((self.hxEst, self.xEst))
-        
-        # print(self.xEst[0])
 
-
-        # plt.cla()
-        #     # for stopping simulation with the esc key.
-        # plt.gcf().canvas.mpl_connect('key_release_event',
-        #         lambda event: [exit(0) if event.key == 'escape' else None])
-        # plt.plot(self.hxEst[0, :].flatten(),
-        #              self.hxEst[1, :].flatten(), "-r", label ="ekf estimation")
-        # plt.plot(self.hxDR[0, :].flatten(),
-        #              self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
-        # plt.plot(self.hxTrue[0, :].flatten(),
-        #              self.hxTrue[1, :].flatten() , "-b", label="ture position")
-        # plt.axis("equal")
-        # plt.legend()
-        # plt.grid(True)
-        # plt.pause(0.001)
+        plt.cla()
+            # for stopping simulation with the esc key.
+        plt.gcf().canvas.mpl_connect('key_release_event',
+                lambda event: [exit(0) if event.key == 'escape' else None])
+        plt.plot(self.hxEst[0, :].flatten(),
+                     self.hxEst[1, :].flatten(), "-r", label ="ekf estimation")
+        plt.plot(self.hxDR[0, :].flatten(),
+                     self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
+        plt.plot(self.hxTrue[0, :].flatten(),
+                     self.hxTrue[1, :].flatten() , "-b", label="ture position")
+        plt.axis("equal")
+        plt.legend()
+        plt.grid(True)
+        plt.pause(0.001)
 
   
     #------------
@@ -361,7 +358,7 @@ class Car:
         # converting velocity to speed, then converting m/s to km/h
         self.currentSpeed = 3.6 * self.IMUVelocity
         # Controlling the car throttle based on the current speed and desired speed 
-        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0))
+        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0.2))
 
     # Private method for Maintaining the speed using Controller
     def __MaintainCarSpeed(self, desiredSpeed, currentSpeed):

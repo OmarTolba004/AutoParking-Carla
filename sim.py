@@ -21,7 +21,8 @@ def main():
         if(carInstance.execCounter < 10):
             continue
         carInstance.applySensorFusion()
-        
+
+
 
 
 
