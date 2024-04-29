@@ -17,7 +17,9 @@ def main():
         world.tick() 
         carInstance.execCounter +=1
         carInstance.OpenCvFrontCameraUpdate()
-        carInstance.SetCarState(20,1)
+        carInstance.SetCarState(80,1)
+        if(carInstance.execCounter < 10):
+            continue
         carInstance.applySensorFusion()
         
 

@@ -43,6 +43,12 @@ class Car:
     # Sensors Data Dictionary 
     # IMU velocity 
     IMUVelocity = 0
+    IMUVelocityX = 0
+    IMUVelocityY = 0
+
+    GPS_NOISE = np.diag([0.5, 0.5]) ** 2 
+    INPUT_NOISE = np.diag([1.0, np.deg2rad(30.0)]) ** 2
+
     # This counter is used to count how many tick have been executed (used to ignore sensors reading at the begining )
     execCounter = 0
     # Current speed from simulation
@@ -176,8 +182,6 @@ class Car:
         
         # Calculate Dead reckoning basked on action model
         self.xDR= self.sf.motion_model(self.xDR, self.u)
-        
-        self.xDR= self.sf.motion_model(self.xDR, self.u)
 
 
         # UnComment for debugging
@@ -195,20 +199,20 @@ class Car:
         # print(self.xEst[0])
 
 
-        plt.cla()
-            # for stopping simulation with the esc key.
-        plt.gcf().canvas.mpl_connect('key_release_event',
-                lambda event: [exit(0) if event.key == 'escape' else None])
-        plt.plot(self.hxEst[0, :].flatten(),
-                     self.hxEst[1, :].flatten() + 1 , "-r", label ="ekf estimation")
-        plt.plot(self.hxDR[0, :].flatten(),
-                     self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
-        plt.plot(self.hxTrue[0, :].flatten(),
-                     self.hxTrue[1, :].flatten() + 0.6, "-b", label="ture position")
-        plt.axis("equal")
-        plt.legend()
-        plt.grid(True)
-        plt.pause(0.001)
+        # plt.cla()
+        #     # for stopping simulation with the esc key.
+        # plt.gcf().canvas.mpl_connect('key_release_event',
+        #         lambda event: [exit(0) if event.key == 'escape' else None])
+        # plt.plot(self.hxEst[0, :].flatten(),
+        #              self.hxEst[1, :].flatten(), "-r", label ="ekf estimation")
+        # plt.plot(self.hxDR[0, :].flatten(),
+        #              self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
+        # plt.plot(self.hxTrue[0, :].flatten(),
+        #              self.hxTrue[1, :].flatten() , "-b", label="ture position")
+        # plt.axis("equal")
+        # plt.legend()
+        # plt.grid(True)
+        # plt.pause(0.001)
 
   
     #------------
@@ -282,10 +286,14 @@ class Car:
         and same with longitudinal axis
         '''
         # Calculating velocity based upon accelration reading in the longitudinal axis
-        self.IMUVelocity = self.__IMUCalculateVelocity(data.accelerometer.x, self.IMUVelocity, self.DT)
+        self.IMUVelocityX = self.__IMUCalculateVelocity(data.accelerometer.x, self.IMUVelocityX, self.DT)
+        self.IMUVelocityY = self.__IMUCalculateVelocity(data.accelerometer.y, self.IMUVelocityY, self.DT)
+        self.IMUVelocity = math.sqrt(self.IMUVelocityX**2 +self.IMUVelocityY**2)
         # Storing velocity in m/s and yawrate in rad/s
-        self.u = np.array([[self.IMUVelocity],[data.gyroscope.x]])
+        self.u = np.array([[self.IMUVelocity],[data.gyroscope.z]])
+        self.u = self.u + self.INPUT_NOISE @ np.random.randn(2, 1)
         
+
     def __IMUCalculateVelocity(self, acceleration, initialVelocity, DT):
         """
         Calculate velocity from acceleration using numerical integration (Trapezoidal Rule).
@@ -321,7 +329,9 @@ class Car:
         self.z = np.array([[data.longitude],[data.latitude]])
         # for now I am using trasfrom values from the simulation as reading [todo]: see how to fix this
         self.z = np.array([[self.car.get_transform().location.x],[self.car.get_transform().location.y]])
-    
+        self.z = self.z + self.GPS_NOISE @ np.random.randn(2, 1) 
+
+
     # Method to open the front Camera OpenCvWindow
     def OpenCvFrontCameraInit(self):
         # Opening window named RGB Front Camera
@@ -348,23 +358,8 @@ class Car:
             [todo] : do you need to pass sensor to the camera or use instance variables
         '''
         # Read velocity (which is vector in 3d) from the game in m/s
-        currentVelocity = self.car.get_velocity()
         # converting velocity to speed, then converting m/s to km/h
-        self.currentSpeed = (3.6 * math.sqrt(currentVelocity.x**2 +currentVelocity.y**2 +currentVelocity.z**2 ))
-
-        #--------
-        # for debugging
-        #----------
-        # self.speed_data.append(self.currentSpeed)
-        # plt.plot(self.speed_data)
-        # plt.xlabel('Time (s)')
-        # plt.ylabel('speed')
-        # plt.title('speed vs Time')
-        # plt.grid(True)
-        # plt.pause(0.001)  # Update the plot
-        # # DEBUGGING
-        # print(self.currentSpeed)
-
+        self.currentSpeed = 3.6 * self.IMUVelocity
         # Controlling the car throttle based on the current speed and desired speed 
         self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0))
 
@@ -391,7 +386,3 @@ class Car:
         cv2.destroyAllWindows() #[todo] : close specific opened windows
         # Stopping camera Sensor (method insied carla.Sensor)
         # self.camera.stop()
-
-
-
-
