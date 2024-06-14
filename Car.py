@@ -1,3 +1,10 @@
+"""************************************************************************************************************************
+*   File Name: Car.py
+*   Authors: Omar Tolba
+*   Last modifing Date: 14/6/2024
+***************************************************************************************************************************
+*   Description: Car Class implementation 
+************************************************************************************************************************"""
 import carla
 import time
 import random 
@@ -7,36 +14,33 @@ import math #for sqrt function
 import pidCPython as pid #importing pid Python wrapper 
 import matplotlib.pyplot as plt # for debugging
 import KalmanEKF as SF
+import sys
+import Controller 
 
 
-'''
-    modules needed:
-        1- openCv
-        2- numpy
-'''
+# the following for path tracking
+##########
+sys.path.append('/home/omar/gp/carla/download/CARLA_Latest/PythonAPI/carla') # for calculating the route using carla Utils
+from agents.navigation.global_route_planner import GlobalRoutePlanner # for calculating the route using carla Utils
+###########
+
 
 '''
 Todos:
-    1- [Todo] : control map layers, load and unload map layer using world object
-    2- [Todo] : Control car lights when applying specifing steering angle
-    3- [Todo] : work in synchronous mode
-    4- [Todo] : customizing the weather
-    5- [Todo] : destroying all sensors and cv2 cleanup
-    6- [todo] : load specific town at the begining 
-    7- [todo] : you may nned to add sleep time for camera to spawn
-    8- [todo] : make front camera and rear camera
-    9- [todo] : add ultrasonics and Imu sensors and ensure their readings are meaningful
-    10- [todo] : agree upon adel alogrithms api prototypes
-    11- [todo] : add lidar for simulation only
-    12- [todo] : add GPS for simulation only [done]
-    13- [todo] : implement funcitons to encapsulate setting car sensros and Controllers such as pid
-
+    1- [Todo] : Control car lights when applying specifing steering angle
+    2- [todo] : make front camera and rear camera 
+    3- [todo] : add ultrasonics 
+    4- [todo] : agree upon adel alogrithms api prototypes
+    4- [todo] : add lidar for simulation only [postponed]
 '''
 class Car:
 
     # ----------------
     ## Class Variables
     # ----------------
+
+    L = 2.9  # [m] Wheel base of vehicle
+    maxSteer = np.radians(70.0) # max steering angle in radian
     # Camera offset on the Z and X direction
     CAMERA_POS_Z = 1.5
     CAMERA_POS_X = 0.4
@@ -44,8 +48,7 @@ class Car:
     # IMU velocity 
     IMUVelocity = 0
     IMUVelocityX = 0
-    IMUVelocityY = 0
-
+    
     GPS_NOISE = np.diag([0.5, 0.5]) ** 2 
     INPUT_NOISE = np.diag([1.0, np.deg2rad(30.0)]) ** 2
 
@@ -86,18 +89,43 @@ class Car:
         self.world = world
         # apply world settings
         self.DT = DT
-        self.__applyCarlaSettings(DT)
-       
-        # Defining Throttle PID, [todo]: need to encapsulated within private function
-        self.throttlePID = pid.pid(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
+        self.__apply_carla_settings(DT)
         # Spawning the Car 
-        self.__spawnTheCar()
-        
-        # required Sensor fusion initialization 
-        self.__SensorFusionInit()
+        self.__spawn_vehicle()
+        # required initialization
+        self.__initialize_controllers()
+        self.__initialize_sensors()
+        self.__initialize_sensor_fusion()
+   
+    def __apply_carla_settings(self, DT):
+        ''' 
+        This function apply the following carla simulation settings : 
+        1 - Activating synchrounous mode 
+        2 - use fixed time step 
+        3- applies phyiscs substepping
+         Synchronous mode + fixed time-step. The client will rule the simulation. The time step will be fixed.
+         The server will not compute the following step until the client sends a tick.
+         This is the best mode when synchrony and precision is relevant.
+         Especially when dealing with slow clients or different elements retrieving information.
+         refer to https://carla.readthedocs.io/en/latest/adv_synchrony_timestep/#setting-synchronous-mode fro more documentation
+        4- adjusting the weather
+        '''
+        # Get world settings
+        settings = self.world.get_settings()
+        #Setting the weather
+        weather = carla.WeatherParameters()
+        weather.sun_altitude_angle = -90
+        # change settings
+        settings.synchronous_mode = True
+        settings.fixed_delta_seconds = DT
+        settings.substepping = True
+        settings.max_substep_delta_time = 0.01
+        settings.max_substeps = 10
+        # Apply
+        self.world.set_weather(weather)
+        self.world.apply_settings(settings)
 
-
-    def __spawnTheCar(self):
+    def __spawn_vehicle(self):
         # Get all avialable spawn points
         self.spawnPoints = self.world.get_map().get_spawn_points()
         # Getting start point of the Car
@@ -112,42 +140,35 @@ class Car:
         # Checking if car spawned correctly 
         if(self.car is None) :
             print("Couldn't spawn the lincoln mkz 2020 car")
-            exit()
+            raise RuntimeError("Failed to spawn vehicle")
 
-    def __applyCarlaSettings(self, DT):
-        ''' 
-        This function apply the following carla simulation settings : 
-        1 - Activating synchrounous mode 
-        2 - use fixed time step 
-        3- applies phyiscs substepping
-         Synchronous mode + fixed time-step. The client will rule the simulation. The time step will be fixed.
-         The server will not compute the following step until the client sends a tick.
-         This is the best mode when synchrony and precision is relevant.
-         Especially when dealing with slow clients or different elements retrieving information.
-         refer to https://carla.readthedocs.io/en/latest/adv_synchrony_timestep/#setting-synchronous-mode fro more documentation
-        '''
-        # Get world settings
-        settings = self.world.get_settings()
-        # change settings
-        settings.synchronous_mode = True
-        settings.fixed_delta_seconds = DT
-        settings.substepping = True
-        settings.max_substep_delta_time = 0.01
-        settings.max_substeps = 10
-        # Apply
-        self.world.apply_settings(settings)
+    #------------
+    ## Initializations
+    #-------------
+    def __initialize_controllers(self):
+        # initialize the controller [todo : make the controller class for couples lateral and longituduinal control]
+        self.lateralController = Controller.LateralControl(L=self.L, max_steer= self.maxSteer)
 
-    def __SensorFusionInit(self):
+        # Defining Throttle PID, [todo]: need to encapsulated within private function
+        self.longitudinalController = Controller.LongitudinalController(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
+       
+    def __initialize_sensors(self):
+        # Configuring Camera and its callback
+        self.camera = self.__configure_camera_sensor()
+        # Setting Up IMU Sensor and its callback
+        self.IMU = self.__configure_imu_sensor()
+        # Setting UP GNSS Sensor and its callback
+        self.GNSS = self.__configure_gnss_sensor()
+
+    def __initialize_sensor_fusion(self):
         # Creating instance out of EKF filter
-        # [todo] : add noise to GPS and IMU
         self.sf = SF.EKF(np.zeros((2,1)), np.zeros((2,1)), self.DT)
-
 
         # initialize True position 
         self.xTrue = np.array([[self.startPoint.location.x],
                                [self.startPoint.location.y],
                                [0],
-                               [self.car.get_velocity().x]])
+                               [self.car.get_velocity().x]]) 
         # initialize estimate position (the value corrected by EKF in correction step)
         self.xEst  = np.copy(self.xTrue)
         # Dead reckoning init value (the value calculated from the motion model and the action)
@@ -166,7 +187,6 @@ class Car:
         self.hxEst = self.xEst
 
     def __sensorFusionObservation(self):
-
         '''
         1 - update xTrue
         2- get input (already done)
@@ -180,7 +200,7 @@ class Car:
                                [self.car.get_velocity().x]])
         
         
-        # Calculate Dead reckoning basked on action model
+        # Calculate Dead reckoning based on action model
         self.xDR= self.sf.motion_model(self.xDR, self.u)
 
 
@@ -188,52 +208,80 @@ class Car:
         self.hxDR = np.hstack((self.hxDR, self.xDR))
         self.hxTrue = np.hstack((self.hxTrue, self.xTrue))
                
-    def applySensorFusion(self):
+    def apply_sensor_fusion(self):
         # apply obesrvation
         self.__sensorFusionObservation()
         # estimating new position 
         self.xEst, self.PEst = self.sf.ekf_estimation(self.xEst, self.PEst, self.z, self.u)
         
         self.hxEst = np.hstack((self.hxEst, self.xEst))
+        
+        ## Uncomment for sensor fusion debugging
+        # plt.cla()
+        #     # for stopping simulation with the esc key.
+        # plt.gcf().canvas.mpl_connect('key_release_event',
+        #         lambda event: [exit(0) if event.key == 'escape' else None])
+        # plt.plot(self.hxEst[0, :].flatten(),
+        #              self.hxEst[1, :].flatten(), "-r", label ="ekf estimation")
+        # plt.plot(self.hxDR[0, :].flatten(),
+        #              self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
+        # plt.plot(self.hxTrue[0, :].flatten(),
+        #              self.hxTrue[1, :].flatten() , "-b", label="ture position")
+        # plt.axis("equal")
+        # plt.legend()
+        # plt.grid(True)
+        # plt.pause(0.001)
 
-        plt.cla()
-            # for stopping simulation with the esc key.
-        plt.gcf().canvas.mpl_connect('key_release_event',
-                lambda event: [exit(0) if event.key == 'escape' else None])
-        plt.plot(self.hxEst[0, :].flatten(),
-                     self.hxEst[1, :].flatten(), "-r", label ="ekf estimation")
-        plt.plot(self.hxDR[0, :].flatten(),
-                     self.hxDR[1, :].flatten(), "-k", label="dead reckoning")
-        plt.plot(self.hxTrue[0, :].flatten(),
-                     self.hxTrue[1, :].flatten() , "-b", label="ture position")
-        plt.axis("equal")
-        plt.legend()
-        plt.grid(True)
-        plt.pause(0.001)
+    #Funciton to generate waypoints and get their rotation angles
+    def __get_route_info(self, startPoint, endPoint, samplingResoloution = 2):
+        x = list()
+        y =list()
+        yaw = list()
+        grp = GlobalRoutePlanner(self.world.get_map(), samplingResoloution)
+        # calculate the route
+        route = grp.trace_route(startPoint, endPoint)
+        # loop over waypoints
+        for waypoint in route:
+            x.append(waypoint[0].transform.location.x)
+            y.append(waypoint[0].transform.location.y)
+            yaw.append(np.deg2rad(waypoint[0].transform.rotation.yaw))
+            self.world.debug.draw_string(location = waypoint[0].transform.location, text = '^',life_time = 70) # for debugging
+        return x,y,yaw
 
-  
-    #------------
-    ## Sensors Utilities
-    #-------------
-    def configureSensors(self):
-        # Configuring Camera and its callback
-        self.__configureCameraSensor()
-        # Setting Up IMU Sensor and its callback
-        self.__configureIMUSensor()
-        # Setting UP GNSS Sensor and its callback
-        self.__configureGNSSSensor()
+    def initialize_path_tracking(self, startPoint, endPoint):
+        '''
+        This Function should be invoked before calling self.applyPathTracking() if new start and end point needed
+        '''
+        '''
+        get cx : array of waypoints x pos
+        get cy : array of waypoints y pos
+        get yaw : array of waypoints car orientation angle
+        '''
+        self.cx, self.cy, self.cyaw = self.__get_route_info(startPoint, endPoint)
+        # get last index of the waypoints
+        self.lastIndex = len(self.cx) - 1
+        # calculate Target index 
+        self.targetIndex, _ = self.lateralController.calc_target_index(self.xEst, self.cx, self.cy)
 
-    def __configureCameraSensor(self):
+    def apply_path_tracking(self):
+        # apply the stanley control
+        steeringAngle, self.targetIndex = self.lateralController.stanley_control(self.xEst, self.cx, self.cy, self.cyaw, self.targetIndex)
+        # Calculate steering openning from [-1 , 1]
+        steerOpenning = steeringAngle / self.maxSteer
+        # Setting car velocity and angular velocity
+        self.set_vehicle_state(40, steerOpenning)        
+
+    def __configure_camera_sensor(self):
         # Getting Camera BluePrint
         cameraBluePrint = self.world.get_blueprint_library().find('sensor.camera.rgb')
         # Camera mounting point relative to the car
-        self.cameraMountingPoint = carla.Transform(carla.Location(z = self.CAMERA_POS_Z, x=self.CAMERA_POS_X))
+        cameraMountingPoint = carla.Transform(carla.Location(z = self.CAMERA_POS_Z, x=self.CAMERA_POS_X))
         # Spawning the Camera
-        self.camera = self.world.try_spawn_actor(cameraBluePrint, self.cameraMountingPoint, attach_to=self.car)
+        camera = self.world.try_spawn_actor(cameraBluePrint, cameraMountingPoint, attach_to=self.car)
         # Checking if Camera spawned correctly 
-        if(self.camera is None):
+        if(camera is None):
             print("Couldn't spawn the Camera sensor")
-            exit()
+            raise RuntimeError("Failed to spawn camera")
         
         # Getting camera image width and height to initalize dict key value-pair with
         self.cameraImageWidth = cameraBluePrint.get_attribute('image_size_x').as_int()
@@ -243,10 +291,11 @@ class Car:
         # we want array of rows equal to height, columns equal to width and we have 4 channels (red, green, blue and alpha)
         self.cameraDataDict = {'image' : np.zeros((self.cameraImageHeight, self.cameraImageWidth, 4))}
         # Camera listen call back
-        self.camera.listen(lambda image: self._CameraListenCallback(image, self.cameraDataDict))
+        camera.listen(lambda image: self.__camera_callback(image, self.cameraDataDict))
 
+        return camera
     # Protected class method, Camera callback
-    def _CameraListenCallback(self, image, dataDict):
+    def __camera_callback(self, image, dataDict):
         '''
         1- Inserting the data into the pass by ref dataDict parameter
         2- numpy reshape is a utility that Gives a new shape to an array without changing its data.
@@ -260,18 +309,24 @@ class Car:
         '''
         dataDict['image'] = np.reshape(np.copy(image.raw_data), (self.cameraImageHeight, self.cameraImageWidth, 4))
 
-    def __configureIMUSensor(self):
+    def __configure_imu_sensor(self):
         # Getting blue print
         IMUBluePrint = self.world.get_blueprint_library().find('sensor.other.imu')
         #[todo] : set blue print attr (such as std deviations and noise seeds)
         # getting IMU mouting point
         IMUMountingPoint = carla.Transform(carla.Location(z = 0, x=0))
         # Spawning the IMU and store it in the self pointer
-        self.IMU = self.world.try_spawn_actor(IMUBluePrint, IMUMountingPoint, attach_to=self.car)
+        IMU = self.world.try_spawn_actor(IMUBluePrint, IMUMountingPoint, attach_to=self.car)
+        # Checking if IMU spawned correctly
+        if(IMU is None):
+            print("Failed to spawn IMU")
+            raise RuntimeError("Failed to spawn IMU")
         # Configure listenning function
-        self.IMU.listen(lambda data : self.__IMUListenCallBack(data))
+        IMU.listen(lambda data : self.__imu_callback(data))
 
-    def __IMUListenCallBack(self, data):
+        return IMU
+
+    def __imu_callback(self, data):
         if(self.execCounter < 10):
             # This loop to ignore first reading which are garbage values due to car spawning from air
             return
@@ -283,15 +338,14 @@ class Car:
         and same with longitudinal axis
         '''
         # Calculating velocity based upon accelration reading in the longitudinal axis
-        self.IMUVelocityX = self.__IMUCalculateVelocity(data.accelerometer.x, self.IMUVelocityX, self.DT)
-        self.IMUVelocityY = self.__IMUCalculateVelocity(data.accelerometer.y, self.IMUVelocityY, self.DT)
-        self.IMUVelocity = math.sqrt(self.IMUVelocityX**2 +self.IMUVelocityY**2)
+        self.IMUVelocityX = self.__calculate_velocity(data.accelerometer.x, self.IMUVelocityX, self.DT)
+        self.IMUVelocity = math.sqrt(self.IMUVelocityX**2)
+        self.currentSpeed = math.sqrt(self.car.get_velocity().x**2 +self.car.get_velocity().y**2)
         # Storing velocity in m/s and yawrate in rad/s
         self.u = np.array([[self.IMUVelocity],[data.gyroscope.z]])
         self.u = self.u + self.INPUT_NOISE @ np.random.randn(2, 1)
-        
-
-    def __IMUCalculateVelocity(self, acceleration, initialVelocity, DT):
+    
+    def __calculate_velocity(self, acceleration, initialVelocity, DT):
         """
         Calculate velocity from acceleration using numerical integration (Trapezoidal Rule).
 
@@ -306,18 +360,19 @@ class Car:
         velocity = velocityChange + initialVelocity
         return velocity
    
-    def __configureGNSSSensor(self):
+    def __configure_gnss_sensor(self):
         # Getting blue print
         GNSSBluePrint = self.world.get_blueprint_library().find('sensor.other.gnss')
         #[todo] : set blue print attr (such as std deviations and noise seeds)
         # getting GNSS mouting point
         GNSSMountingPoint = carla.Transform(carla.Location(z = 0, x=0))
         # Spawning the GNSS and store it in the self pointer
-        self.GNSS = self.world.try_spawn_actor(GNSSBluePrint, GNSSMountingPoint, attach_to=self.car)
+        GNSS = self.world.try_spawn_actor(GNSSBluePrint, GNSSMountingPoint, attach_to=self.car)
         # Configure listenning function
-        self.GNSS.listen(lambda data : self.__GNSSListenCallBack(data))
+        GNSS.listen(lambda data : self.__gnss_callback(data))
+        return GNSS
 
-    def __GNSSListenCallBack(self, data):
+    def __gnss_callback(self, data):
         if(self.execCounter < 10):
             # This loop to ignore first reading which are garbage values due to car spawning from air
             return
@@ -328,7 +383,6 @@ class Car:
         self.z = np.array([[self.car.get_transform().location.x],[self.car.get_transform().location.y]])
         self.z = self.z + self.GPS_NOISE @ np.random.randn(2, 1) 
 
-
     # Method to open the front Camera OpenCvWindow
     def OpenCvFrontCameraInit(self):
         # Opening window named RGB Front Camera
@@ -338,7 +392,7 @@ class Car:
     def OpenCvFrontCameraUpdate(self):
         image = self.cameraDataDict['image']
         # Adding the speed text to the winodow showing car camera
-        image = cv2.putText(image, 'Speed: '+str(int(self.currentSpeed))+' kmh', self.OpenCVOrg2, self.OpenCVFont, self.OpenCVFontScale, self.OpenCVColor, self.OpenCVThickness, cv2.LINE_AA)
+        image = cv2.putText(image, 'Speed: '+str(int(3.6 * self.currentSpeed))+' kmh', self.OpenCVOrg2, self.OpenCVFont, self.OpenCVFontScale, self.OpenCVColor, self.OpenCVThickness, cv2.LINE_AA)
         # Showing data over the window
         cv2.imshow('RGB Front Camera',self.cameraDataDict['image'])
         # Wait for a small amount of time (1 millisecond) and check if a key is pressed
@@ -349,25 +403,25 @@ class Car:
     #------------
     ## State Utilitites
     #-------------
-    def SetCarState(self, desiredSpeed, desiredAngle):
+    def set_vehicle_state(self, desiredSpeed, steerOpenning):
         '''
             This is an initial function to control car state
             [todo] : do you need to pass sensor to the camera or use instance variables
         '''
         # Read velocity (which is vector in 3d) from the game in m/s
         # converting velocity to speed, then converting m/s to km/h
-        self.currentSpeed = 3.6 * self.IMUVelocity
+        imu_velocity_kmh = 3.6 * self.IMUVelocity
         # Controlling the car throttle based on the current speed and desired speed 
-        self.car.apply_control(carla.VehicleControl(throttle=self.__MaintainCarSpeed(desiredSpeed,self.currentSpeed), steer=0.2))
+        self.car.apply_control(carla.VehicleControl(throttle=self.__adjust_throttle(desiredSpeed, imu_velocity_kmh), steer=steerOpenning)) 
 
     # Private method for Maintaining the speed using Controller
-    def __MaintainCarSpeed(self, desiredSpeed, currentSpeed):
+    def __adjust_throttle(self, desiredSpeed, currentSpeed):
         ''' 
         this is a very simple function to maintan desired speed
         s arg is actual current speed
         '''
         # Calculating Throttle openning percentage 
-        throttleOpeningPercentage = self.throttlePID.update(setpoint=desiredSpeed, measurement=currentSpeed)
+        throttleOpeningPercentage = self.longitudinalController.update(setpoint=desiredSpeed, measurement=currentSpeed)
         return throttleOpeningPercentage /100.0
 
               
@@ -381,5 +435,4 @@ class Car:
             sensor.stop()
         # Closing all openCv2 windows
         cv2.destroyAllWindows() #[todo] : close specific opened windows
-        # Stopping camera Sensor (method insied carla.Sensor)
-        # self.camera.stop()
+

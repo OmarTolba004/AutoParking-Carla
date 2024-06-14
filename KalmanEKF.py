@@ -1,3 +1,10 @@
+"""************************************************************************************************************************
+*   File Name: KalmanEFK.py
+*   Authors: Omar Tolba
+*   Last modifing Date: 27/4/2024
+***************************************************************************************************************************
+*   Description: extended kalman filter implementation
+************************************************************************************************************************"""
 import numpy as np
 import math
 import matplotlib.pyplot as plt # Debugging
@@ -58,9 +65,10 @@ class EKF:
                     [1.0, 0.0]])
 
         x = F @ x + B @ u
+        
         return x
     
-    # Observation model funciton: refer to the "Sensor Fusion with EKF" pdf for details
+    # Observation model function: refer to the "Sensor Fusion with EKF" pdf for details
     def observation_model(self, x):
         H = np.array([
             [1, 0, 0, 0],
@@ -94,19 +102,21 @@ class EKF:
     
     # EKF prediction and correction steps
     def ekf_estimation(self, xEst, PEst, z, u):
-        #  Predict
-        xPred = self.motion_model(xEst, u)
-        jF = self.jacob_f(xEst, u)
-        PPred = jF @ PEst @ jF.T + self.Q
+        try:
+            #  Prediction step
+            xPred = self.motion_model(xEst, u)
+            jF = self.jacob_f(xEst, u)
+            PPred = jF @ PEst @ jF.T + self.Q
 
-        #  Correct
-        jH = self.jacob_h()
-        zPred = self.observation_model(xPred)
-        y = z - zPred
-        S = jH @ PPred @ jH.T + self.R
-        K = PPred @ jH.T @ np.linalg.inv(S)
-        xEst = xPred + K @ y
-        PEst = (np.eye(len(xEst)) - K @ jH) @ PPred
-
+            #  Correction step
+            jH = self.jacob_h()
+            zPred = self.observation_model(xPred)
+            y = z - zPred
+            S = jH @ PPred @ jH.T + self.R
+            K = PPred @ jH.T @ np.linalg.inv(S)
+            xEst = xPred + K @ y
+            PEst = (np.eye(len(xEst)) - K @ jH) @ PPred
+        except np.linalg.LinAlgError as e :
+            print(f"Numerical issue encountered : {e}")
         return xEst, PEst
     
