@@ -15,14 +15,15 @@ from utils.angle import angle_mod
 
 class LateralControl:
     last_index = 0
-    index_searching_span = 10
+    
     
 
-    def __init__(self, L= 2.9, max_steer = np.radians(70.0), k = 0.5, calculate_over_span = False):
+    def __init__(self, L= 2.9, max_steer = np.radians(70.0), k = 0.5, calculate_over_span = False, index_searching_span_size = 10):
         self.L = L  # [m] Wheel base of vehicle
         self.MaxSteer = max_steer # [rad] max steering angle
         self.K = k  # control gain
         self.calculate_over_span = calculate_over_span
+        self.index_searching_span_size = index_searching_span_size
     
 
     def stanley_control(self, state, cx, cy, cyaw, last_target_idx):
@@ -69,8 +70,8 @@ class LateralControl:
             # Search nearest point index
             # Calculating the distance between points in x and y and the front wheel and put them in the lists dx and dy repectively
             # The points that's compared with respect to the front wheel are calculated in a span of value = index_searching_span
-            dx = [fx - icx for icx in cx[self.last_index: self.last_index+self.index_searching_span]]
-            dy = [fy - icy for icy in cy[self.last_index: self.last_index+self.index_searching_span]]
+            dx = [fx - icx for icx in cx[self.last_index: self.last_index+self.index_searching_span_size]]
+            dy = [fy - icy for icy in cy[self.last_index: self.last_index+self.index_searching_span_size]]
             # Calculating the Eculedian distance
             d = np.hypot(dx, dy)
             # The index of the trajectory point that is closest to the vehicle's front axle, extracting the minumum index of the array of distances

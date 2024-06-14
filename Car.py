@@ -147,7 +147,7 @@ class Car:
     #-------------
     def __initialize_controllers(self):
         # initialize the controller [todo : make the controller class for couples lateral and longituduinal control]
-        self.lateralController = Controller.LateralControl(L=self.L, max_steer= self.maxSteer, k=0.5, calculate_over_span=True)
+        self.lateralController = Controller.LateralControl(L=self.L, max_steer= self.maxSteer, k=0.5, calculate_over_span=True, index_searching_span_size=5)
 
         # Defining Throttle PID, [todo]: need to encapsulated within private function
         self.longitudinalController = Controller.LongitudinalController(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
