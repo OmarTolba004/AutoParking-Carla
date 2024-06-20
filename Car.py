@@ -39,7 +39,7 @@ class Car:
     ## Class Variables
     # ----------------
 
-    L = 2.9  # [m] Wheel base of vehicle
+    L = 2.84988  # [m] Wheel base of vehicle
     maxSteer = np.radians(70.0) # max steering angle in radian
     # Camera offset on the Z and X direction
     CAMERA_POS_Z = 1.5
@@ -48,9 +48,12 @@ class Car:
     # IMU velocity 
     IMUVelocity = 0
     IMUVelocityX = 0
-    
-    GPS_NOISE = np.diag([0.5, 0.5]) ** 2 
-    INPUT_NOISE = np.diag([1.0, np.deg2rad(30.0)]) ** 2
+
+    # [todo ]: return noise back 
+    # GPS_NOISE = np.diag([0.5, 0.5]) ** 2 
+    # INPUT_NOISE = np.diag([1.0, np.deg2rad(30.0)]) ** 2
+    GPS_NOISE =  np.diag([0, 0]) ** 2 
+    INPUT_NOISE = np.diag([0, np.deg2rad(0.0)]) ** 2
 
     # This counter is used to count how many tick have been executed (used to ignore sensors reading at the begining )
     execCounter = 0
@@ -79,7 +82,7 @@ class Car:
     # ----------------
     ## Class Constructor
     # ----------------
-    def __init__(self, client, world, DT):
+    def __init__(self, client, world, DT, spawnPoint=None):
 
         # ----------------
         ## Setting up the world and the vehicle
@@ -91,7 +94,7 @@ class Car:
         self.DT = DT
         self.__apply_carla_settings(DT)
         # Spawning the Car 
-        self.__spawn_vehicle()
+        self.__spawn_vehicle(spawnPoint)
         # required initialization
         self.__initialize_controllers()
         self.__initialize_sensors()
@@ -125,11 +128,14 @@ class Car:
         self.world.set_weather(weather)
         self.world.apply_settings(settings)
 
-    def __spawn_vehicle(self):
+    def __spawn_vehicle(self, spawnPoint = None):
         # Get all avialable spawn points
         self.spawnPoints = self.world.get_map().get_spawn_points()
-        # Getting start point of the Car
-        self.startPoint = self.spawnPoints[0]
+        if(spawnPoint == None):
+            # Getting start point of the Car
+            self.startPoint = self.spawnPoints[0]
+        else:
+            self.startPoint = spawnPoint
         # Getting specific Car blueprint
         self.carBluePrint = self.world.get_blueprint_library().find('vehicle.lincoln.mkz_2020')
         # Setting the spawned Car as the ego vehicle and specifying the color to black
@@ -147,7 +153,7 @@ class Car:
     #-------------
     def __initialize_controllers(self):
         # initialize the controller [todo : make the controller class for couples lateral and longituduinal control]
-        self.lateralController = Controller.LateralControl(L=self.L, max_steer= self.maxSteer, k=0.5, calculate_over_span=True, index_searching_span_size=5)
+        self.lateralController = Controller.LateralControl(L=self.L, max_steer= self.maxSteer, k=1, calculate_over_span=False, index_searching_span_size=5)
 
         # Defining Throttle PID, [todo]: need to encapsulated within private function
         self.longitudinalController = Controller.LongitudinalController(l_kp= 65, l_ki=0.06, l_kd=0.5,l_maxLimit= 100, l_minLimit= 0) 
@@ -167,7 +173,7 @@ class Car:
         # initialize True position 
         self.xTrue = np.array([[self.startPoint.location.x],
                                [self.startPoint.location.y],
-                               [0],
+                               [np.deg2rad(self.startPoint.rotation.yaw)],
                                [self.car.get_velocity().x]]) 
         # initialize estimate position (the value corrected by EKF in correction step)
         self.xEst  = np.copy(self.xTrue)
@@ -233,22 +239,35 @@ class Car:
         # plt.pause(0.001)
 
     #Funciton to generate waypoints and get their rotation angles
-    def __get_route_info(self, startPoint, endPoint, samplingResoloution = 2):
+    def __get_route_info(self, startPoint, endPoint, samplingResoloution = 2, simulatorPath = False):
         x = list()
         y =list()
         yaw = list()
-        grp = GlobalRoutePlanner(self.world.get_map(), samplingResoloution)
-        # calculate the route
-        route = grp.trace_route(startPoint, endPoint)
-        # loop over waypoints
-        for waypoint in route:
-            x.append(waypoint[0].transform.location.x)
-            y.append(waypoint[0].transform.location.y)
-            yaw.append(np.deg2rad(waypoint[0].transform.rotation.yaw))
-            self.world.debug.draw_string(location = waypoint[0].transform.location, text = '^',life_time = 70) # for debugging
-        return x,y,yaw
+        velocity = list()
+        if(simulatorPath == True):
+            grp = GlobalRoutePlanner(self.world.get_map(), samplingResoloution)
+            # calculate the route
+            route = grp.trace_route(startPoint, endPoint)
+            # loop over waypoints
+            for waypoint in route:
+                x.append(waypoint[0].transform.location.x)
+                y.append(waypoint[0].transform.location.y)
+                yaw.append(np.deg2rad(waypoint[0].transform.rotation.yaw))
+                self.world.debug.draw_string(location = waypoint[0].transform.location, text = '^',life_time = 100) # for debugging
+        else:
+            # [todo] : make it in more general way by adding adel's code into this project
+            with open('path.txt', 'r') as f:
+                for point in f.readlines():
+                    a, b, c, d = eval(point)
+                    x.append(a)
+                    y.append(b)
+                    yaw.append(c)
+                    velocity.append(d)
+                    self.world.debug.draw_string(location = carla.Location(x=a, y=b, z=0.281942), text = '^',life_time = 100) # for debugging
+                f.close()
+        return x,y,yaw,velocity
 
-    def initialize_path_tracking(self, startPoint, endPoint):
+    def initialize_path_tracking(self, startPoint, endPoint, simulatorPath = True):
         '''
         This Function should be invoked before calling self.applyPathTracking() if new start and end point needed
         '''
@@ -257,19 +276,31 @@ class Car:
         get cy : array of waypoints y pos
         get yaw : array of waypoints car orientation angle
         '''
-        self.cx, self.cy, self.cyaw = self.__get_route_info(startPoint, endPoint)
+        self.cx, self.cy, self.cyaw, self.cvelocity = self.__get_route_info(startPoint, endPoint, 2, simulatorPath)
         # get last index of the waypoints
         self.lastIndex = len(self.cx) - 1
         # calculate Target index 
         self.targetIndex, _ = self.lateralController.calc_target_index(self.xEst, self.cx, self.cy)
+        
 
     def apply_path_tracking(self):
         # apply the stanley control
+        # print("*intermediate values **********")
+        # print(self.xEst)
+        # print("veclocity ",self.xEst[3])
+        # print(self.cx)d
+        # print(self.cy)
+        # print(self.cyaw)
+        # print("*intermediate values **********")
         steeringAngle, self.targetIndex = self.lateralController.stanley_control(self.xEst, self.cx, self.cy, self.cyaw, self.targetIndex)
+        print("targe velocity is ", self.cvelocity[self.targetIndex])
+        # print("steering angle is ", steeringAngle)
+        # print("*******************************")
         # Calculate steering openning from [-1 , 1]
         steerOpenning = steeringAngle / self.maxSteer
         # Setting car velocity and angular velocity
-        self.set_vehicle_state(40, steerOpenning)        
+        print("steer opening is ", steerOpenning)
+        self.set_vehicle_state(self.cvelocity[self.targetIndex], steerOpenning)        
 
     def __configure_camera_sensor(self):
         # Getting Camera BluePrint
@@ -340,7 +371,7 @@ class Car:
         # Calculating velocity based upon accelration reading in the longitudinal axis
         self.IMUVelocityX = self.__calculate_velocity(data.accelerometer.x, self.IMUVelocityX, self.DT)
         self.IMUVelocity = math.sqrt(self.IMUVelocityX**2)
-        self.currentSpeed = math.sqrt(self.car.get_velocity().x**2 +self.car.get_velocity().y**2)
+        self.currentSpeed = math.sqrt(self.car.get_velocity().x**2)
         # Storing velocity in m/s and yawrate in rad/s
         self.u = np.array([[self.IMUVelocity],[data.gyroscope.z]])
         self.u = self.u + self.INPUT_NOISE @ np.random.randn(2, 1)
@@ -392,7 +423,7 @@ class Car:
     def OpenCvFrontCameraUpdate(self):
         image = self.cameraDataDict['image']
         # Adding the speed text to the winodow showing car camera
-        image = cv2.putText(image, 'Speed: '+str(int(3.6 * self.currentSpeed))+' kmh', self.OpenCVOrg2, self.OpenCVFont, self.OpenCVFontScale, self.OpenCVColor, self.OpenCVThickness, cv2.LINE_AA)
+        image = cv2.putText(image, 'Speed: '+str(int(3.6 * self.IMUVelocity))+' kmh', self.OpenCVOrg2, self.OpenCVFont, self.OpenCVFontScale, self.OpenCVColor, self.OpenCVThickness, cv2.LINE_AA)
         # Showing data over the window
         cv2.imshow('RGB Front Camera',self.cameraDataDict['image'])
         # Wait for a small amount of time (1 millisecond) and check if a key is pressed
@@ -412,7 +443,13 @@ class Car:
         # converting velocity to speed, then converting m/s to km/h
         imu_velocity_kmh = 3.6 * self.IMUVelocity
         # Controlling the car throttle based on the current speed and desired speed 
-        self.car.apply_control(carla.VehicleControl(throttle=self.__adjust_throttle(desiredSpeed, imu_velocity_kmh), steer=steerOpenning)) 
+        # Stopping the car if desired vehicle is zero 
+        if(desiredSpeed == 0):
+            self.car.apply_control(carla.VehicleControl(throttle=0, steer=steerOpenning, brake = 0.2)) 
+        else:
+            self.car.apply_control(carla.VehicleControl(throttle=self.__adjust_throttle(desiredSpeed, imu_velocity_kmh), steer=steerOpenning)) 
+
+        
 
     # Private method for Maintaining the speed using Controller
     def __adjust_throttle(self, desiredSpeed, currentSpeed):

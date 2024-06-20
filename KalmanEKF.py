@@ -19,19 +19,28 @@ class EKF:
         In the Kalman filter, the process noise is typically assumed to be Gaussian (normally distributed) with mean zero.
         where Q:The covariance matrix which quantifies the statistical properties of the process noise. 
         '''
+        #[todo] : return noise back
         self.Q = np.diag([
                     0.1,  # variance of location on x-axis
                     0.1,  # variance of location on y-axis
                     np.deg2rad(1.0),  # variance of yaw angle
                     1.0  # variance of velocity
                 ]) ** 2  # predict state covariance
+        # self.Q = np.diag([
+        #             0,  # variance of location on x-axis
+        #             0,  # variance of location on y-axis
+        #             np.deg2rad(1.0),  # variance of yaw angle
+        #             0  # varice of velocity
+        #         ]) ** 2  # predict state covariance
         '''
         Measurement noise is assumed to be Gaussian (normally distributed) with mean zero.
         It is typically denoted by 𝛿 and represents the difference between the true measurement and the measured value.
         The covariance matrix R quantifies the statistical properties of the measurement noise.
         Similar to the process noise covariance matrix Q, R is also a square matrix where each element represents the covariance between different measurement variables.
         '''
-        self.R = np.diag([1.0, 1.0]) ** 2  # Observation x,y position covariance
+        #[todo] : return noise back
+        # self.R = np.diag([1.0, 1.0]) ** 2  # Observation x,y position covariance
+        self.R = np.diag([0,0]) ** 2  # Observation x,y position covariance
         
         # Input and measurement noise
         '''

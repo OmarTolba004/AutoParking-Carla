@@ -7,15 +7,18 @@
 ************************************************************************************************************************"""
 import carla
 from Car import Car
+GarageSpawnPoint = carla.Transform(carla.Location(x=285, y=-172, z=0.281942), carla.Rotation(yaw = -90))
+
+
 
 def main():
     # Connecting to the server
     client = carla.Client('localhost',2000)
     # Get world Map
     world = client.get_world()
-    carInstance = Car(client, world, 0.01)
+    carInstance = Car(client, world, 0.005, GarageSpawnPoint)
     carInstance.OpenCvFrontCameraInit()
-    carInstance.initialize_path_tracking(carInstance.spawnPoints[0].location, carInstance.spawnPoints[-49].location)
+    carInstance.initialize_path_tracking(carInstance.spawnPoints[0].location, carInstance.spawnPoints[-49].location, False)
     ## Main loop
     while True:
         # applying world tick (synchronous mode)

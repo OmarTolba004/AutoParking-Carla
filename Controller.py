@@ -44,11 +44,22 @@ class LateralControl:
 
         # theta_e corrects the heading error
         theta_e = self.normalize_angle(cyaw[current_target_idx] - state[2][0])
+        # print("Current tagrget index",current_target_idx)
+        # print("target angle is ", cyaw[current_target_idx])
+        # print("state angle is ", state[2][0])
         # theta_d corrects the cross track error
+        # print("error in front axle", error_front_axle)
         theta_d = np.arctan2(self.K * error_front_axle, state[3][0])
         # Steering control
         delta = theta_e + theta_d
-
+        if (delta > self.MaxSteer ):
+            delta = 1
+        elif (delta < - self.MaxSteer):
+            delta = -1
+        
+        # print("theta e ", theta_e)
+        # print("theta d ", theta_d)
+        # print("delta is ", delta)
         return delta, current_target_idx
     
     def calc_target_index(self, state, cx, cy):
@@ -77,8 +88,7 @@ class LateralControl:
             # The index of the trajectory point that is closest to the vehicle's front axle, extracting the minumum index of the array of distances
             target_idx = np.argmin(d) 
             self.last_index = target_idx + self.last_index
-            print(self.last_index)
-            # Project RMS error onto front axle vector, front_axle_vec is a unit vector perpendicular to the vehicle's heading.
+            # Project RMS error onto front axle vector, front_axle_vec (front axle vector) is a unit vector perpendicular to the vehicle's heading.
             front_axle_vec = [-np.cos(state[2][0] + np.pi / 2),
                             -np.sin(state[2][0] + np.pi / 2)]
             # The cross-track error, which is the perpendicular distance from the front axle of the vehicle to the target trajectory.
